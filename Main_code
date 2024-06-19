@@ -1,0 +1,345 @@
+
+***Analysis dataset;
+data pce_ttn;set   o.death_pce_final;
+if 0<=PCE_RISK<7.5 then pce_cat=0;
+if 7.5<=PCE_RISK<20 then pce_cat=1;
+if 20<=PCE_RISK then pce_cat=2;
+if pce_cat=0 and hipsi_car=0 then pce_cat_ttn =0;
+if pce_cat=1 and hipsi_car=0 then pce_cat_ttn =1;
+if pce_cat=2 and hipsi_car=0 then pce_cat_ttn =2;
+if pce_cat=0 and hipsi_car=1 then pce_cat_ttn =3;
+if pce_cat=1 and hipsi_car=1 then pce_cat_ttn =4;
+if pce_cat=2 and hipsi_car=1 then pce_cat_ttn =5;
+
+IF  TOT_TTY_HF>10 THEN TOT_TTY_HF_10 = 10;
+IF  TOT_TTY_HF<=10 THEN TOT_TTY_HF_10 = TOT_TTY_HF;
+IF HF=1 AND TOT_TTY_HF>10 THEN HF_10 = 0;
+IF HF=1 AND TOT_TTY_HF<=10 THEN HF_10 = 1;
+IF HF=0  THEN HF_10 = 0;
+
+IF  TOT_TTY_AFIB>10 THEN TOT_TTY_AFIB_10 = 10;
+IF  TOT_TTY_AFIB<=10 THEN TOT_TTY_AFIB_10 = TOT_TTY_AFIB;
+IF AFIB=1 AND TOT_TTY_AFIB>10 THEN AFIB_10 = 0;
+IF AFIB=1 AND TOT_TTY_AFIB<=10 THEN AFIB_10 = 1;
+IF AFIB=0  THEN AFIB_10 = 0;
+
+IF  TOT_TTY_DEATH>10 THEN TOT_TTY_DEATH_10 = 10;
+IF  TOT_TTY_DEATH<=10 THEN TOT_TTY_DEATH_10 = TOT_TTY_DEATH;
+IF DEATH=1 AND TOT_TTY_DEATH>10 THEN DEATH_10 = 0;
+IF DEATH=1 AND TOT_TTY_DEATH<=10 THEN DEATH_10 = 1;
+IF DEATH=0  THEN DEATH_10 = 0;
+
+IF  comp_time>10 THEN comp_time_10 = 10;
+IF  comp_time<=10 THEN comp_time_10 = comp_time;
+IF comp_EVENT=1 AND comp_time>10 THEN comp_EVENT_10 = 0;
+IF comp_EVENT=1 AND comp_time<=10 THEN comp_EVENT_10 = 1;
+IF comp_EVENT=0  THEN comp_EVENT_10 = 0;
+
+ logHFyr_u=(log(TOT_TTY_HF_10/1000));
+logdeathyr_u=(log(TOT_TTY_DEATH_10/1000));
+logafibyr_u=(log(TOT_TTY_AFIB_10/1000));
+logdcmyr_u=(log(tot_tty_dcm/1000));
+logcompyr_u=(log(comp_time_10/1000));
+
+if chol_low_med=1 then delete;
+run;
+
+****Macro needed for all the further analysis;
+%macro means_2 (dataset,var,class);
+
+proc univariate data=&dataset;
+class &class;
+var &var;
+histogram/normal;
+run;
+
+
+proc ttest data=&dataset;
+class &class;
+var &var;
+run;
+
+proc npar1way data=&dataset wilcoxon;
+class &class;
+var &var;
+run;
+
+proc means data = &dataset mean std median q1 q3 min max n nmiss;
+var &var;
+class &class;run;
+%mend means_2;
+
+%macro means_3 (dataset,var,class);
+proc univariate data=&dataset;
+class &class;
+var &var;
+histogram/normal;
+run;
+
+proc anova data=&dataset;
+class &class;
+model &var = &class;
+run;
+proc npar1way data=&dataset ;
+class &class;
+var &var;
+run;
+proc means data = &dataset mean std median q1 q3 min max n nmiss;
+var &var;
+class &class;run;
+%mend means_3;
+
+%macro frequency (dataset,var,class);
+
+proc freq data = &dataset;
+tables &var*&class/chisq ;
+run;
+
+%mend frequency;
+
+%macro IRR (dataset,event_var,offset_var,var,restricted,predictor);
+
+PROC SORT DATA=&dataset  ;BY &predictor ;RUN;
+ ods exclude all;
+ods output Estimates=Output; 
+proc genmod data=&dataset; 
+by &predictor;
+class eid &predictor;
+model &event_var = / type3 dist=poisson offset=&offset_var;
+repeated subject=eid;
+estimate " Incidence Rates BY &predictor" intercept 1/exp;
+/*TITLE "OVERALL: Crude &var Incidence Rates BY HTN RX GROUPS";*/
+run;
+TITLE;
+ods exclude none;
+data Output ;
+   set Output;
+   keep &predictor   MeanEstimate  MeanLowerCL MeanUpperCL ProbChiSq ;
+  if mod(_n_,2) = 1;
+run;
+title "Incidence Rates for &var &restricted. ";
+proc print data=Output;
+run;
+%mend IRR;
+
+%macro hr_adj (data,predictor,outcome_time , outcome_event ,reference);
+
+/*ods exclude all;*/
+ods output  HazardRatios = h;
+PROC PHREG DATA=&data;
+CLASS  &predictor (ref="&reference.")   ;
+MODEL &outcome_time*&outcome_event(0)= &predictor  townsend_index 
+p22009_a1 p22009_a2 p22009_a3 p22009_a4 p22009_a5 p22009_a6 p22009_a7 p22009_a8 p22009_a9 p22009_a10
+;
+HAZARDRATIO &predictor/DIFF=REF;
+RUN;
+/*ods exclude none;*/
+
+
+title "Adjusted HR of &predictor. with &outcome_event";
+proc print data=h;run;
+title;
+%mend hr_adj;
+
+%macro hr_adj_ttn (data,predictor,outcome_time , outcome_event ,reference);
+
+/*ods exclude all;*/
+ods output  HazardRatios = h;
+PROC PHREG DATA=&data;
+CLASS  &predictor (ref="&reference.")  p31 ;
+MODEL &outcome_time*&outcome_event(0)= &predictor  p21022 p31 townsend_index 
+p22009_a1 p22009_a2 p22009_a3 p22009_a4 p22009_a5 p22009_a6 p22009_a7 p22009_a8 p22009_a9 p22009_a10
+;
+HAZARDRATIO &predictor/DIFF=REF;
+RUN;
+/*ods exclude none;*/
+
+
+title "Adjusted HR of &predictor. with &outcome_event";
+proc print data=h;run;
+title;
+%mend hr_adj_ttn;
+
+
+
+
+*Table 1 TTR;
+proc freq data=pce_ttn;
+tables hipsi_car;run;
+
+%means_2 (pce_ttn,p21022,hipsi_car);
+%means_2 (pce_ttn,bmi,hipsi_car);
+%means_2 (pce_ttn,sbp_,hipsi_car);
+%means_2 (pce_ttn,dbp_,hipsi_car);
+%means_2 (pce_ttn,tot_chol_mgdl,hipsi_car);
+%means_2 (pce_ttn,gluc_mg_dl,hipsi_car);
+%means_2 (pce_ttn,hba1c_in_percent,hipsi_car);
+%means_2 (pce_ttn,sum_paq,hipsi_car);
+%means_2 (pce_ttn,sleep_hrs,hipsi_car);
+%means_2 (pce_ttn,sum_diet,hipsi_car);
+%means_2 (pce_ttn,townsend_index,hipsi_car);
+
+%means_2 (pce_ttn,PCE_RISK,hipsi_car);
+
+%frequency (pce_ttn,pce_cat,hipsi_car);
+%frequency (pce_ttn,p31,hipsi_car);
+%frequency (pce_ttn,bp_low_med,hipsi_car);
+%frequency (pce_ttn,insulin_med,hipsi_car);
+%frequency (pce_ttn,chol_low_med,hipsi_car);
+
+*************;
+%frequency (pce_ttn,hypertensive,hipsi_car);
+%frequency (pce_ttn,obesity,hipsi_car);
+%frequency (pce_ttn,diabetes,hipsi_car);
+%frequency (pce_ttn,lipidemic,hipsi_car);
+***************; 
+%frequency (pce_ttn,curr_smoke,hipsi_car);
+%frequency (pce_ttn,pce_cat,hipsi_car);
+%frequency (pce_ttn,comp_event_10,hipsi_car);
+%frequency (pce_ttn,hf_10,hipsi_car);
+%frequency (pce_ttn,afib_10,hipsi_car);
+%frequency (dcm_full_,dcm,hipsi_car);
+%frequency (pce_ttn,death_10,hipsi_car);
+/**/
+/*%frequency (pce_ttn,hypertensive,hipsi_car);*/
+/*%frequency (pce_ttn,diabetes,hipsi_car);*/
+/*%frequency (pce_ttn,lipidemic,hipsi_car);*/
+/*%frequency (pce_ttn,obesity,hipsi_car);*/
+
+proc freq data=pce_ttn;
+tables hipsi_car;run;
+
+
+proc freq data=pce_ttn;
+tables pce_cat_ttn;run;
+
+
+*Table 1 Risk factors;
+proc freq data=pce_ttn;
+tables pce_cat;run;
+
+%means_3 (pce_ttn,p21022,pce_cat);
+%means_3 (pce_ttn,bmi,pce_cat);
+%means_3 (pce_ttn,townsend_index,pce_cat);
+%means_3 (pce_ttn,sbp_,pce_cat);
+%means_3 (pce_ttn,dbp_,pce_cat);
+%means_3 (pce_ttn,tot_chol_mgdl,pce_cat);
+%means_3 (pce_ttn,glucose_mgdl,pce_cat);
+%means_3 (pce_ttn,hba1c_in_percent,pce_cat);
+%means_3 (pce_ttn,pce_risk,pce_cat);
+%means_3 (pce_ttn,sleep_hrs,pce_cat);
+%means_3 (pce_ttn,sum_diet,pce_cat);
+
+
+%frequency (pce_ttn,p31,pce_cat);
+%frequency (pce_ttn,bp_low_med,pce_cat);
+%frequency (pce_ttn,insulin_med,pce_cat);
+%frequency (pce_ttn,chol_low_med,pce_cat);
+%frequency (pce_ttn,hipsi_car,pce_cat);
+
+***;
+%frequency (pce_ttn,hypertensive,pce_cat);
+%frequency (pce_ttn,obesity,pce_cat);
+%frequency (pce_ttn,diabetes,pce_cat);
+%frequency (pce_ttn,lipidemic,pce_cat);
+****;
+%frequency (pce_ttn,comp_event_10,pce_cat);
+%frequency (pce_ttn,hf_10,pce_cat);
+%frequency (pce_ttn,afib_10,pce_cat);
+%frequency (pce_ttn,dcm,pce_cat);
+%frequency (pce_ttn,death_10,pce_cat);
+
+
+***TTR results;
+**Frequency;
+ %freq(data=pce_ttn,predictor=hipsi_car,var=comp_event_10 );
+%freq(data=pce_ttn,predictor=hipsi_car,var=afib_10 );
+%freq(data=pce_ttn,predictor=hipsi_car,var=hf_10 );
+%freq(data=pce_ttn,predictor=hipsi_car,var=death_10 );
+*%freq(data=hf_FULL_,predictor=hipsi_car,var=dcm);
+
+
+**Incidence rate;
+%IRR(dataset=pce_ttn,event_var=comp_event_10,offset_var=logcompyr_u,var=COMP,restricted="10 year censored",predictor=hipsi_car);
+%IRR(dataset=pce_ttn,event_var=hf_10,offset_var=logHFyr_u,var=ASCVD,restricted="10 year censored",predictor=hipsi_car);
+%IRR(dataset=pce_ttn,event_var=afib_10,offset_var=logafibyr_u,var=ASCVD,restricted="10 year censored",predictor=hipsi_car);
+*%IRR(dataset=dcm_full_,event_var=dcm,offset_var=logdcmyr_u,var=ASCVD,restricted="10 year censored",predictor=hipsi_car);
+%IRR(dataset=pce_ttn,event_var=death,offset_var=logdeathyr_u,var=ASCVD,restricted="10 year censored",predictor=hipsi_car);
+
+**Hazards;
+%hr_adj_ttn(data=pce_ttn,predictor=hipsi_car,outcome_time=comp_time_10, outcome_event=comp_event_10 ,reference=0);
+*%hr_adj_ttn(data=hf_FULL_,predictor=hipsi_car,outcome_time=TOT_TTY_HF, outcome_event=hf ,reference=0);
+*%hr_adj_ttn(data=afib_FULL_,predictor=hipsi_car,outcome_time=TOT_TTY_afib, outcome_event=afib ,reference=0);
+%hr_adj_ttn(data=pce_ttn,predictor=hipsi_car,outcome_time=tot_tty_death_10, outcome_event=death_10 ,reference=0);
+
+
+
+
+***Lifestyle results;
+**Frequency; 
+***TTR results;
+**Frequency; 
+%freq(data=pce_ttn,predictor=pce_cat,var=comp_event_10 );
+%freq(data=pce_ttn,predictor=pce_cat,var=afib_10 );
+%freq(data=pce_ttn,predictor=pce_cat,var=hf_10 );
+%freq(data=pce_ttn,predictor=pce_cat,var=death_10 );
+%freq(data=hf_FULL_,predictor=pce_cat,var=dcm);
+
+
+**Incidence rate;
+%IRR(dataset=pce_ttn,event_var=comp_event_10,offset_var=logcompyr_u,var=comp,restricted="10 year censored",predictor=pce_cat);
+%IRR(dataset=pce_ttn,event_var=hf_10,offset_var=logHFyr_u,var=ASCVD,restricted="10 year censored",predictor=pce_cat);
+%IRR(dataset=pce_ttn,event_var=afib_10,offset_var=logafibyr_u,var=ASCVD,restricted="10 year censored",predictor=pce_cat);
+/*%IRR(dataset=dcm_full_,event_var=dcm,offset_var=logdcmyr_u,var=ASCVD,restricted="10 year censored",predictor=pce_cat);*/
+%IRR(dataset=pce_ttn,event_var=death_10,offset_var=logdeathyr_u,var=ASCVD,restricted="10 year censored",predictor=pce_cat);
+
+**Hazards;
+%hr_adj(data=pce_ttn,predictor=pce_cat,outcome_time=comp_time_10, outcome_event=comp_event_10 ,reference=0);
+/*%hr_adj(data=pce_ttn,predictor=pce_cat,outcome_time=TOT_TTY_HF, outcome_event=hf ,reference=2);*/
+/*%hr_adj(data=pce_ttn,predictor=pce_cat,outcome_time=TOT_TTY_afib, outcome_event=afib ,reference=2);*/
+/*%hr_adj(data=dcm_FULL_,predictor=pce_cat,outcome_time=TOT_TTY_dcm, outcome_event=dcm ,reference=2);*/
+%hr_adj(data=pce_ttn,predictor=pce_cat,outcome_time=tot_tty_death_10, outcome_event=death_10 ,reference=0);
+
+data hf0_2;set hf_full_;if pce_cat in (2,1);run;
+
+***TTR and Lifestyle combined results;
+
+proc freq data=pce_ttn;
+tables pce_cat;run;
+
+proc freq data=pce_ttn;
+tables pce_cat_ttr;
+where hipsi_car=0;run;
+
+proc freq data=pce_ttn;
+tables pce_cat_ttr;
+where hipsi_car=1;run;
+
+proc means data = pce_ttn;
+var es_8;class pce_cat_ttr hipsi_car;run;
+proc freq data=afib_full_;
+tables afib;
+;run;
+
+**Frequency; 
+%freq(data=pce_ttn,predictor=pce_cat_ttn,var=hf_10 );
+%freq(data=pce_ttn,predictor=pce_cat_ttn,var=afib_10 );
+%freq(data=pce_ttn,predictor=pce_cat_ttn,var=dcm );
+%freq(data=pce_ttn,predictor=pce_cat_ttn,var=death_10 );
+%freq(data=pce_ttn,predictor=pce_cat_ttn,var=comp_event_10 );
+
+**Incidence rate;
+%IRR(dataset=pce_ttn,event_var=hf_10,offset_var=logHFyr_u,var=ASCVD,restricted="10 year censored",predictor=pce_cat_ttn);
+%IRR(dataset=pce_ttn,event_var=afib_10,offset_var=logafibyr_u,var=ASCVD,restricted="10 year censored",predictor=pce_cat_ttn);
+%IRR(dataset=pce_ttn,event_var=dcm,offset_var=logdcmyr_u,var=ASCVD,restricted="10 year censored",predictor=pce_cat_ttn);
+%IRR(dataset=pce_ttn,event_var=death_10,offset_var=logdeathyr_u,var=ASCVD,restricted="10 year censored",predictor=pce_cat_ttn);
+%IRR(dataset=pce_ttn,event_var=comp_event_10,offset_var=logcompyr_u,var=ASCVD,restricted="10 year censored",predictor=pce_cat_ttn);
+
+**Hazards;
+/*%hr_adj(data=pce_ttn,predictor=pce_cat_ttn,outcome_time=TOT_TTY_HF_10, outcome_event=hf_10 ,reference=0);*/
+/*%hr_adj(data=pce_ttn,predictor=pce_cat_ttn,outcome_time=TOT_TTY_afib_10, outcome_event=afib_10 ,reference=0);*/
+/*%hr_adj(data=dcm_FULL_,predictor=pce_cat_ttn,outcome_time=TOT_TTY_dcm, outcome_event=dcm ,reference=0);*/
+%hr_adj(data=pce_ttn,predictor=pce_cat_ttn,outcome_time=tot_tty_death_10, outcome_event=death_10  ,reference=0);
+%hr_adj(data=pce_ttn,predictor=pce_cat_ttn,outcome_time=comp_time_10, outcome_event=comp_event_10  ,reference=0);
+
+
